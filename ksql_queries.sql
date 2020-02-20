@@ -7,7 +7,7 @@ create stream pn_delivery_stream (
     source_id bigint,
     website_id bigint
 ) with (
-    kafka_topic = 'pushowl.entity.pn_delivery_avro',
+    kafka_topic = 'pushowl.entity.pn_delivery',
     value_format = 'avro',
     timestamp = 'delivered_time',
     timestamp_format = 'yyyy-MM-dd HH:mm:ss.SSSSSS+0000'
