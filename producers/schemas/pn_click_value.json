@@ -1,0 +1,35 @@
+{
+  "namespace": "com.pushowl",
+  "type": "record",
+  "name": "pn_click",
+  "fields": [
+    {
+      "name": "id",
+      "type": "long"
+    },
+    {
+      "name": "subscriber_id",
+      "type": "long"
+    },
+    {
+      "name": "source",
+      "type": "string"
+    },
+    {
+      "name": "source_id",
+      "type": "long"
+    },
+    {
+      "name": "clicked_time",
+      "type": "string"
+    },
+    {
+      "name": "clicked_component",
+      "type": "string"
+    },
+    {
+      "name": "website_id",
+      "type": "long"
+    }
+  ]
+}

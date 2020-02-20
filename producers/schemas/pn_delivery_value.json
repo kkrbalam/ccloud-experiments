@@ -1,0 +1,31 @@
+{
+  "namespace": "com.pushowl",
+  "type": "record",
+  "name": "pn_delivery",
+  "fields": [
+    {
+      "name": "id",
+      "type": "long"
+    },
+    {
+      "name": "subscriber_id",
+      "type": "long"
+    },
+    {
+      "name": "source",
+      "type": "string"
+    },
+    {
+      "name": "source_id",
+      "type": "long"
+    },
+    {
+      "name": "delivered_time",
+      "type": "string"
+    },
+    {
+      "name": "website_id",
+      "type": "long"
+    }
+  ]
+}
