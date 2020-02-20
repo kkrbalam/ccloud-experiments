@@ -4,16 +4,15 @@ import pandas as pd
 from confluent_kafka import avro
 
 import config
-from producers.producer import AvroProducer
+from producers.producer import JSONProducer
 
 pn_delivery_avro_schema = avro.load(f"{Path(__file__).parents[0]}/schemas/pn_delivery_value.json")
 
-pn_delivered_producer = AvroProducer(
+pn_delivered_producer = JSONProducer(
     client_id='pn_delivery_producer',
     topic_name=config.PN_DELIVERY_TOPIC,
     num_partitions=6,
-    num_replicas=3,
-    value_schema=pn_delivery_avro_schema
+    num_replicas=3
 )
 
 # Since we have to aggregate windowed counts for clicked and delivered notifications, it is important that
@@ -48,16 +47,14 @@ delivered_pns.sort_values(by='delivered_time', inplace=True)
 count = 0
 for index, pn in delivered_pns.iterrows():
     try:
-        pn_delivered_producer.producer.produce(
-            topic=config.PN_DELIVERY_TOPIC,
-            value={
-                'id': pn.id,
-                'source': pn.source,
-                'subscriber_id': pn.subscriber_id,
-                'source_id': pn.source_id,
-                'delivered_time': pd.to_datetime(pn.delivered_time).strftime('%Y-%m-%d %H:%M:%S.%f%z'),
-                'website_id': pn.website_id
-            })
+        pn_delivered_producer.produce({
+            'id': pn.id,
+            'source': pn.source,
+            'subscriber_id': pn.subscriber_id,
+            'source_id': pn.source_id,
+            'delivered_time': pd.to_datetime(pn.delivered_time).strftime('%Y-%m-%d %H:%M:%S.%f%z'),
+            'website_id': pn.website_id
+        })
 
         # Sleep for some time after every 10000th row so that buffer does not overflow
         count += 1
