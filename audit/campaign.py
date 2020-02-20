@@ -12,3 +12,6 @@ class DataSource(object):
         return campaign_df.groupby('source_id')['source_id'].agg(
             total='count'
         ).reset_index().sort_values(by='total', ascending=False)
+
+    def campaign_report_windowed(self):
+        campaign_df = self.pn_data[self.pn_data.source == 'campaign']

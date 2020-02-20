@@ -30,21 +30,33 @@ def run_spark_job(spark):
     pn_df = spark.readStream \
         .format("kafka") \
         .option("startingOffsets", "earliest") \
+        .option("subscribe", PN_DELIVERY_TOPIC) \
+        .option("maxOffsetsPerTrigger", 10000) \
         .option("kafka.client.id", "spark_pn_report") \
         .option("kafka.bootstrap.servers", BROKER_URL) \
         .option("kafka.sasl.mechanism", "PLAIN") \
         .option("kafka.security.protocol", "SASL_SSL") \
         .option("kafka.sasl.jaas.config", KAFKA_SASL_JAAS_CONFIG) \
-        .option("subscribe", PN_DELIVERY_TOPIC) \
-        .option("maxOffsetsPerTrigger", 1000) \
         .load()
 
     # Extract JSON keys as columns of service_table data frame
     pn_data_df = pn_df.withColumn('data', psf.from_json(psf.col("value").cast('string'), schema)).select('data.*')
     pn_data_df.printSchema()
 
-    campaign_report_df = pn_data_df.filter(pn_data_df.source == 'campaign').groupby(['source_id']).count()
-    campaign_report_df.printSchema()
+    # campaign_report_df = pn_data_df.filter(pn_data_df.source == 'campaign').groupby(['source_id']).count()
+    # campaign_report_df.printSchema()
+
+    pn_data_df.createOrReplaceTempView('pn_data_table')
+
+    campaign_report_df = spark.sql('''
+        select 
+            source_id, count(*) as count
+        from 
+            pn_data_table
+        where
+            source = 'campaign'
+        group by source_id
+    ''')
 
     query = campaign_report_df \
         .select('source_id', 'count') \
