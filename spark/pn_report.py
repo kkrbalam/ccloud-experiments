@@ -27,12 +27,13 @@ schema = StructType([StructField("id", StringType()),
 def run_spark_job(spark):
     # Create Spark configurations with max offset of 200 per trigger
     logger.info(f"Broker URL: {BROKER_URL} Topic: {PN_DELIVERY_TOPIC}")
+
+    # More configuration options at - https://spark.apache.org/docs/latest/structured-streaming-kafka-integration.html
     pn_df = spark.readStream \
         .format("kafka") \
         .option("startingOffsets", "earliest") \
         .option("subscribe", PN_DELIVERY_TOPIC) \
         .option("maxOffsetsPerTrigger", 10000) \
-        .option("kafka.client.id", "spark_pn_report") \
         .option("kafka.bootstrap.servers", BROKER_URL) \
         .option("kafka.sasl.mechanism", "PLAIN") \
         .option("kafka.security.protocol", "SASL_SSL") \
@@ -43,27 +44,58 @@ def run_spark_job(spark):
     pn_data_df = pn_df.withColumn('data', psf.from_json(psf.col("value").cast('string'), schema)).select('data.*')
     pn_data_df.printSchema()
 
-    # campaign_report_df = pn_data_df.filter(pn_data_df.source == 'campaign').groupby(['source_id']).count()
-    # campaign_report_df.printSchema()
+    campaign_report_df = pn_data_df.filter(pn_data_df.source == 'campaign').groupby(['source_id']).count()
+    campaign_report_df.printSchema()
 
-    pn_data_df.createOrReplaceTempView('pn_data_table')
+    # pn_data_df.createOrReplaceTempView('pn_data_table')
+    #
+    # campaign_report_df = spark.sql('''
+    #     select
+    #         source_id, count(*) as count
+    #     from
+    #         pn_data_table
+    #     where
+    #         source = 'campaign'
+    #     group by source_id
+    # ''')
 
-    campaign_report_df = spark.sql('''
-        select 
-            source_id, count(*) as count
-        from 
-            pn_data_table
-        where
-            source = 'campaign'
-        group by source_id
-    ''')
+    # Windowed aggregation
+    windowed_report_df = pn_data_df.filter(pn_data_df.source == 'campaign').groupBy(
+        'source_id',
+        psf.window('delivered_time', '15 minute')
+    ).count()
+    windowed_report_df.printSchema()
 
-    query = campaign_report_df \
-        .select('source_id', 'count') \
-        .orderBy('count', ascending=False) \
+    campaign_report_df \
+        .selectExpr('source_id as key', 'count as value') \
+        .selectExpr('CAST(key as STRING)', 'CAST(value AS STRING)') \
         .writeStream \
-        .format('console') \
-        .outputMode('complete') \
+        .format('kafka') \
+        .option("kafka.bootstrap.servers", BROKER_URL) \
+        .option("kafka.sasl.mechanism", "PLAIN") \
+        .option("kafka.security.protocol", "SASL_SSL") \
+        .option("kafka.sasl.jaas.config", KAFKA_SASL_JAAS_CONFIG) \
+        .option("topic", "spark.aggregate.campaign_delivery") \
+        .option("checkpointLocation", '/tmp/campaign_report_checkpoint/') \
+        .outputMode('update') \
+        .start()
+
+    query = windowed_report_df \
+        .withColumn('key', psf.to_json(psf.struct([
+            windowed_report_df.source_id,
+            psf.unix_timestamp(windowed_report_df.window.start).alias('start'),
+            psf.unix_timestamp(windowed_report_df.window.end).alias('end')]))) \
+        .selectExpr('key', 'count as value') \
+        .selectExpr('CAST(key as STRING)', 'CAST(value as STRING)') \
+        .writeStream \
+        .format('kafka') \
+        .option("kafka.bootstrap.servers", BROKER_URL) \
+        .option("kafka.sasl.mechanism", "PLAIN") \
+        .option("kafka.security.protocol", "SASL_SSL") \
+        .option("kafka.sasl.jaas.config", KAFKA_SASL_JAAS_CONFIG) \
+        .option("topic", "spark.aggregate.campaign_delivery_windowed") \
+        .option("checkpointLocation", '/tmp/campaign_report_windowed_checkpoint/') \
+        .outputMode('update') \
         .start()
 
     query.awaitTermination()
