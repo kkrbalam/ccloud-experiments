@@ -1,4 +1,5 @@
 # /usr/local/spark/bin/spark-submit --packages org.apache.spark:spark-sql-kafka-0-10_2.11:2.4.4 work/spark/pn_report.py
+import json
 import logging
 import os
 
@@ -41,30 +42,13 @@ def run_spark_job(spark):
         .load()
 
     # Extract JSON keys as columns of service_table data frame
-    pn_data_df = pn_df.withColumn('data', psf.from_json(psf.col("value").cast('string'), schema)).select('data.*')
+    pn_data_df = pn_df \
+        .withColumn('data', psf.from_json(psf.col("value").cast('string'), schema)).select('data.*') \
+        .withColumn('delivered_time', psf.to_timestamp('delivered_time', 'yyyy-MM-dd HH:mm:ss'))
     pn_data_df.printSchema()
 
     campaign_report_df = pn_data_df.filter(pn_data_df.source == 'campaign').groupby(['source_id']).count()
     campaign_report_df.printSchema()
-
-    # pn_data_df.createOrReplaceTempView('pn_data_table')
-    #
-    # campaign_report_df = spark.sql('''
-    #     select
-    #         source_id, count(*) as count
-    #     from
-    #         pn_data_table
-    #     where
-    #         source = 'campaign'
-    #     group by source_id
-    # ''')
-
-    # Windowed aggregation
-    windowed_report_df = pn_data_df.filter(pn_data_df.source == 'campaign').groupBy(
-        'source_id',
-        psf.window('delivered_time', '15 minute')
-    ).count()
-    windowed_report_df.printSchema()
 
     campaign_report_df \
         .selectExpr('source_id as key', 'count as value') \
@@ -80,13 +64,53 @@ def run_spark_job(spark):
         .outputMode('update') \
         .start()
 
+    # Windowed aggregation
+    windowed_report_df = pn_data_df.filter(pn_data_df.source == 'campaign') \
+        .withWatermark("delivered_time", "10 days") \
+        .groupBy('source_id', psf.window('delivered_time', '15 minute')) \
+        .count()
+    windowed_report_df.printSchema()
+
+    def append_schema_to_value(json_val):
+        return json.dumps({
+            "schema": {
+                "type": "struct",
+                "fields": [{
+                    "type": "int64",
+                    "optional": False,
+                    "field": "source_id"
+                }, {
+                    "type": "int32",
+                    "optional": False,
+                    "field": "count"
+                }, {
+                    "type": "int64",
+                    "optional": False,
+                    "field": "start"
+                }, {
+                    "type": "int64",
+                    "optional": False,
+                    "field": "end"
+                }],
+                "optional": False,
+                "name": "kafka_table"
+            },
+            "payload": json.loads(json_val)
+        })
+
+    append_schema_to_value_udf = psf.udf(append_schema_to_value, StringType())
+
+    # Not giving source_id as key here since we don't want to allocate partitions based on campaign_id or else
+    # it will lead to hot spots. Keep key as Null, and that way it will be evenly distributed across all partitions.
     query = windowed_report_df \
-        .withColumn('key', psf.to_json(psf.struct([
-            windowed_report_df.source_id,
+        .selectExpr('CAST(source_id as INT)', 'count', 'window') \
+        .withColumn('row_value', psf.to_json(psf.struct([
+            'count',
+            'source_id',
             psf.unix_timestamp(windowed_report_df.window.start).alias('start'),
             psf.unix_timestamp(windowed_report_df.window.end).alias('end')]))) \
-        .selectExpr('key', 'count as value') \
-        .selectExpr('CAST(key as STRING)', 'CAST(value as STRING)') \
+        .withColumn('value', append_schema_to_value_udf('row_value')) \
+        .selectExpr('CAST(value as STRING)') \
         .writeStream \
         .format('kafka') \
         .option("kafka.bootstrap.servers", BROKER_URL) \

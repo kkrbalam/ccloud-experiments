@@ -25,6 +25,8 @@ class BaseProducer(abc.ABC):
             'sasl.password': config.CONFLUENT_KAFKA_API_SECRET,
         }
 
+        # TODO: Review some of the settings since those did not fix ksql dropping packets. Especially idempotence.
+        # TODO: Set key (Subscriber ID?) to partition data.
         self.producer_properties = dict(self.broker_properties, **{
             'client.id': client_id,
             'queue.buffering.max.ms': 5000,  # Accumulate 5 seconds worth of data
